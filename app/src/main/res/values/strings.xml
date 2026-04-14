@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Muffle</string>
+    <string name="notification_channel_name">노이즈 재생</string>
+    <string name="notification_channel_description">브라운 노이즈 재생 상태</string>
+</resources>
