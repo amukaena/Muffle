@@ -29,6 +29,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -202,18 +203,34 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // 볼륨 슬라이더
+            // 볼륨 퍼센트 표시
+            Text(
+                text = "${(uiState.volume * 100).toInt()}%",
+                fontSize = 14.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // 볼륨 슬라이더 + 업/다운 버튼
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.VolumeDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
+                IconButton(
+                    onClick = {
+                        val newVol = (uiState.volume - 0.05f).coerceIn(0f, 1f)
+                        viewModel.setVolume(newVol)
+                        service?.setVolume(newVol)
+                    }
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeDown,
+                        contentDescription = "볼륨 줄이기",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
                 Slider(
                     value = uiState.volume,
                     onValueChange = { vol ->
@@ -227,12 +244,20 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                         inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                 )
-                Icon(
-                    Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(24.dp)
-                )
+                IconButton(
+                    onClick = {
+                        val newVol = (uiState.volume + 0.05f).coerceIn(0f, 1f)
+                        viewModel.setVolume(newVol)
+                        service?.setVolume(newVol)
+                    }
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "볼륨 높이기",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
     }

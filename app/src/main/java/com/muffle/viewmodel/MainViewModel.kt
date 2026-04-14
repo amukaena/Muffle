@@ -1,6 +1,8 @@
 package com.muffle.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import android.content.Context
+import androidx.lifecycle.AndroidViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,17 +16,28 @@ data class MainUiState(
     val remainingTimeText: String = "",
 )
 
-class MainViewModel : ViewModel() {
+class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _uiState = MutableStateFlow(MainUiState())
+    private val prefs = application.getSharedPreferences("muffle_settings", Context.MODE_PRIVATE)
+
+    private val _uiState = MutableStateFlow(
+        MainUiState(
+            stopHour = prefs.getInt("stop_hour", 7),
+            stopMinute = prefs.getInt("stop_minute", 0),
+            volume = prefs.getFloat("volume", 0.7f),
+        )
+    )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     fun setStopTime(hour: Int, minute: Int) {
         _uiState.value = _uiState.value.copy(stopHour = hour, stopMinute = minute)
+        prefs.edit().putInt("stop_hour", hour).putInt("stop_minute", minute).apply()
     }
 
     fun setVolume(volume: Float) {
-        _uiState.value = _uiState.value.copy(volume = volume)
+        val clamped = volume.coerceIn(0f, 1f)
+        _uiState.value = _uiState.value.copy(volume = clamped)
+        prefs.edit().putFloat("volume", clamped).apply()
     }
 
     fun setPlaying(playing: Boolean) {
