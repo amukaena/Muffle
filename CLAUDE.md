@@ -28,3 +28,36 @@ git config user.name "amu7517"
 - Android 수면용 브라운 노이즈 앱 (Kotlin + Jetpack Compose)
 - 옆집 소음을 덮기 위한 브라운 노이즈 무한 재생
 - 정해진 시간(타이머)까지 재생 후 자동 종료
+
+## 주요 기능
+- **브라운 노이즈 재생**: 44100Hz PCM 16-bit 모노, DC drift 방지 (leakFactor: 0.998)
+- **타이머 종료**: 설정한 시각에 자동 정지 (다음날 자동 계산)
+- **설정 영구 저장**: SharedPreferences(`muffle_settings`)로 종료 시각, 볼륨 저장
+- **세밀한 볼륨 조절**: 슬라이더 + 업/다운 버튼 (5%씩 증감), 퍼센트 표시
+- **포그라운드 서비스**: 알림 채널을 통한 백그라운드 재생
+
+## 아키텍처
+```
+com.muffle/
+├── MainActivity.kt          # 진입점
+├── MuffleApplication.kt     # 알림 채널 생성
+├── audio/
+│   └── BrownNoiseGenerator.kt  # 브라운 노이즈 오디오 생성
+├── service/
+│   └── NoisePlaybackService.kt # 포그라운드 서비스 (재생/타이머)
+├── ui/
+│   ├── screen/
+│   │   └── MainScreen.kt       # 메인 UI (Compose)
+│   └── theme/
+│       ├── Color.kt
+│       └── Theme.kt
+└── viewmodel/
+    └── MainViewModel.kt        # AndroidViewModel + SharedPreferences
+```
+
+## 기술 스택
+- **언어**: Kotlin
+- **UI**: Jetpack Compose + Material3
+- **상태 관리**: StateFlow + AndroidViewModel
+- **영속성**: SharedPreferences (`muffle_settings`)
+- **빌드**: Gradle 8.5, Min SDK 26, Target SDK 34

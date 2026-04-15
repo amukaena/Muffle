@@ -3,78 +3,98 @@ package com.muffle.viewmodel
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
+import com.muffle.audio.BrownNoiseGenerator
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.Calendar
 
 data class MainUiState(
     val isPlaying: Boolean = false,
-    val stopHour: Int = 7,
-    val stopMinute: Int = 0,
-    val volume: Float = 0.7f,
+    val stopHour: Int = DEFAULT_STOP_HOUR,
+    val stopMinute: Int = DEFAULT_STOP_MINUTE,
+    val volume: Float = BrownNoiseGenerator.DEFAULT_VOLUME,
     val remainingTimeText: String = "",
-)
+) {
+    companion object {
+        const val DEFAULT_STOP_HOUR = 7
+        const val DEFAULT_STOP_MINUTE = 0
+    }
+}
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val prefs = application.getSharedPreferences("muffle_settings", Context.MODE_PRIVATE)
+    private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val _uiState = MutableStateFlow(
         MainUiState(
-            stopHour = prefs.getInt("stop_hour", 7),
-            stopMinute = prefs.getInt("stop_minute", 0),
-            volume = prefs.getFloat("volume", 0.7f),
+            stopHour = prefs.getInt(KEY_STOP_HOUR, MainUiState.DEFAULT_STOP_HOUR),
+            stopMinute = prefs.getInt(KEY_STOP_MINUTE, MainUiState.DEFAULT_STOP_MINUTE),
+            volume = prefs.getFloat(KEY_VOLUME, BrownNoiseGenerator.DEFAULT_VOLUME),
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
 
     fun setStopTime(hour: Int, minute: Int) {
-        _uiState.value = _uiState.value.copy(stopHour = hour, stopMinute = minute)
-        prefs.edit().putInt("stop_hour", hour).putInt("stop_minute", minute).apply()
+        _uiState.update { it.copy(stopHour = hour, stopMinute = minute) }
+        prefs.edit()
+            .putInt(KEY_STOP_HOUR, hour)
+            .putInt(KEY_STOP_MINUTE, minute)
+            .apply()
     }
 
     fun setVolume(volume: Float) {
         val clamped = volume.coerceIn(0f, 1f)
-        _uiState.value = _uiState.value.copy(volume = clamped)
-        prefs.edit().putFloat("volume", clamped).apply()
+        _uiState.update { it.copy(volume = clamped) }
+        prefs.edit().putFloat(KEY_VOLUME, clamped).apply()
     }
 
     fun setPlaying(playing: Boolean) {
-        _uiState.value = _uiState.value.copy(isPlaying = playing)
+        _uiState.update { it.copy(isPlaying = playing) }
     }
 
     fun updateRemainingTime() {
         val state = _uiState.value
         if (!state.isPlaying) {
-            _uiState.value = state.copy(remainingTimeText = "")
+            _uiState.update { it.copy(remainingTimeText = "") }
             return
         }
-        val stopMillis = calculateStopTimeMillis(state.stopHour, state.stopMinute)
-        val remaining = stopMillis - System.currentTimeMillis()
-        if (remaining <= 0) {
-            _uiState.value = state.copy(remainingTimeText = "종료 시간 도달")
-            return
+
+        val remaining = calculateStopTimeMillis(state.stopHour, state.stopMinute) - System.currentTimeMillis()
+        val text = if (remaining <= 0) {
+            "종료 시간 도달"
+        } else {
+            val hours = remaining / MILLIS_PER_HOUR
+            val minutes = (remaining % MILLIS_PER_HOUR) / MILLIS_PER_MINUTE
+            "${hours}시간 ${minutes}분 남음"
         }
-        val hours = remaining / (1000 * 60 * 60)
-        val minutes = (remaining % (1000 * 60 * 60)) / (1000 * 60)
-        _uiState.value = state.copy(
-            remainingTimeText = "${hours}시간 ${minutes}분 남음"
-        )
+        _uiState.update { it.copy(remainingTimeText = text) }
     }
 
-    fun calculateStopTimeMillis(hour: Int = _uiState.value.stopHour, minute: Int = _uiState.value.stopMinute): Long {
+    fun calculateStopTimeMillis(
+        hour: Int = _uiState.value.stopHour,
+        minute: Int = _uiState.value.stopMinute,
+    ): Long {
         val now = Calendar.getInstance()
         val stop = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
-        }
-        // 설정 시각이 현재보다 이전이면 다음 날로
-        if (stop.timeInMillis <= now.timeInMillis) {
-            stop.add(Calendar.DAY_OF_YEAR, 1)
+            if (timeInMillis <= now.timeInMillis) {
+                add(Calendar.DAY_OF_YEAR, 1)
+            }
         }
         return stop.timeInMillis
+    }
+
+    companion object {
+        private const val PREFS_NAME = "muffle_settings"
+        private const val KEY_STOP_HOUR = "stop_hour"
+        private const val KEY_STOP_MINUTE = "stop_minute"
+        private const val KEY_VOLUME = "volume"
+        private const val MILLIS_PER_MINUTE = 1000L * 60
+        private const val MILLIS_PER_HOUR = MILLIS_PER_MINUTE * 60
     }
 }

@@ -3,8 +3,7 @@ package com.muffle.audio
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
-import kotlin.math.min
-import kotlin.math.max
+import kotlin.random.Random
 
 class BrownNoiseGenerator {
 
@@ -15,15 +14,14 @@ class BrownNoiseGenerator {
     private var isPlaying = false
 
     @Volatile
-    private var volume: Float = 0.7f
+    private var volume: Float = DEFAULT_VOLUME
 
     fun start() {
         if (isPlaying) return
         isPlaying = true
 
-        val sampleRate = 44100
         val bufferSize = AudioTrack.getMinBufferSize(
-            sampleRate,
+            SAMPLE_RATE,
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
@@ -37,7 +35,7 @@ class BrownNoiseGenerator {
             )
             .setAudioFormat(
                 AudioFormat.Builder()
-                    .setSampleRate(sampleRate)
+                    .setSampleRate(SAMPLE_RATE)
                     .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                     .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                     .build()
@@ -50,7 +48,7 @@ class BrownNoiseGenerator {
         track.play()
 
         playbackThread = Thread {
-            generateBrownNoise(track, bufferSize, sampleRate)
+            generateBrownNoise(track, bufferSize)
         }.apply {
             name = "BrownNoiseThread"
             priority = Thread.MAX_PRIORITY
@@ -60,7 +58,7 @@ class BrownNoiseGenerator {
 
     fun stop() {
         isPlaying = false
-        playbackThread?.join(1000)
+        playbackThread?.join(THREAD_JOIN_TIMEOUT)
         playbackThread = null
         audioTrack?.apply {
             stop()
@@ -76,25 +74,29 @@ class BrownNoiseGenerator {
 
     fun getVolume(): Float = volume
 
-    private fun generateBrownNoise(track: AudioTrack, bufferSize: Int, @Suppress("UNUSED_PARAMETER") sampleRate: Int) {
+    private fun generateBrownNoise(track: AudioTrack, bufferSize: Int) {
         val buffer = ShortArray(bufferSize / 2)
         var lastSample = 0.0
 
-        // 브라운 노이즈: 이전 샘플에 작은 랜덤 변화를 누적
-        // leakFactor로 DC 드리프트 방지
-        val leakFactor = 0.998
-        val stepSize = 800.0
-
         while (isPlaying) {
             for (i in buffer.indices) {
-                val white = (Math.random() * 2.0 - 1.0) * stepSize
-                lastSample = lastSample * leakFactor + white
-                lastSample = max(-32000.0, min(32000.0, lastSample))
+                val white = Random.nextDouble(-STEP_SIZE, STEP_SIZE)
+                lastSample = (lastSample * LEAK_FACTOR + white).coerceIn(-SAMPLE_CLAMP, SAMPLE_CLAMP)
                 buffer[i] = lastSample.toInt().toShort()
             }
             if (isPlaying) {
                 track.write(buffer, 0, buffer.size)
             }
         }
+    }
+
+    companion object {
+        const val DEFAULT_VOLUME = 0.7f
+
+        private const val SAMPLE_RATE = 44100
+        private const val LEAK_FACTOR = 0.998
+        private const val STEP_SIZE = 800.0
+        private const val SAMPLE_CLAMP = 32000.0
+        private const val THREAD_JOIN_TIMEOUT = 1000L
     }
 }

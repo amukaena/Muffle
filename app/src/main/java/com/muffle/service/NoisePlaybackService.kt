@@ -1,8 +1,9 @@
 package com.muffle.service
 
+import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.os.Binder
 import android.os.IBinder
@@ -11,14 +12,21 @@ import com.muffle.MainActivity
 import com.muffle.MuffleApplication
 import com.muffle.R
 import com.muffle.audio.BrownNoiseGenerator
-import java.util.Timer
-import java.util.TimerTask
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.util.Calendar
 
 class NoisePlaybackService : Service() {
 
     private val binder = LocalBinder()
     private val noiseGenerator = BrownNoiseGenerator()
-    private var stopTimer: Timer? = null
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var stopJob: Job? = null
 
     var isPlaying: Boolean = false
         private set
@@ -35,8 +43,8 @@ class NoisePlaybackService : Service() {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_STOP -> stopPlayback()
+        if (intent?.action == ACTION_STOP) {
+            stopPlayback()
         }
         return START_STICKY
     }
@@ -57,7 +65,7 @@ class NoisePlaybackService : Service() {
     fun stopPlayback() {
         if (!isPlaying) return
 
-        cancelTimer()
+        cancelStopJob()
         noiseGenerator.stop()
         isPlaying = false
 
@@ -72,38 +80,34 @@ class NoisePlaybackService : Service() {
     fun updateStopTime(stopAtMillis: Long) {
         stopTimeMillis = stopAtMillis
         if (isPlaying) {
-            cancelTimer()
             scheduleStop(stopAtMillis)
             updateNotification()
         }
     }
 
     private fun scheduleStop(stopAtMillis: Long) {
-        cancelTimer()
-        val delay = stopAtMillis - System.currentTimeMillis()
-        if (delay <= 0) {
+        cancelStopJob()
+        val delayMs = stopAtMillis - System.currentTimeMillis()
+        if (delayMs <= 0) {
             stopPlayback()
             return
         }
-        stopTimer = Timer().apply {
-            schedule(object : TimerTask() {
-                override fun run() {
-                    stopPlayback()
-                }
-            }, delay)
+        stopJob = serviceScope.launch {
+            delay(delayMs)
+            stopPlayback()
         }
     }
 
-    private fun cancelTimer() {
-        stopTimer?.cancel()
-        stopTimer = null
+    private fun cancelStopJob() {
+        stopJob?.cancel()
+        stopJob = null
     }
 
-    private fun buildNotification(): android.app.Notification {
+    private fun buildNotification(): Notification {
         val contentIntent = PendingIntent.getActivity(
             this, 0,
             Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PENDING_INTENT_FLAGS
         )
 
         val stopIntent = PendingIntent.getService(
@@ -111,14 +115,12 @@ class NoisePlaybackService : Service() {
             Intent(this, NoisePlaybackService::class.java).apply {
                 action = ACTION_STOP
             },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PENDING_INTENT_FLAGS
         )
-
-        val stopTimeText = formatTime(stopTimeMillis)
 
         return NotificationCompat.Builder(this, MuffleApplication.CHANNEL_ID)
             .setContentTitle("Muffle 재생 중")
-            .setContentText("${stopTimeText}에 종료 예정")
+            .setContentText("${formatTime(stopTimeMillis)}에 종료 예정")
             .setSmallIcon(R.drawable.ic_noise)
             .setContentIntent(contentIntent)
             .addAction(R.drawable.ic_stop, "정지", stopIntent)
@@ -128,24 +130,29 @@ class NoisePlaybackService : Service() {
     }
 
     private fun updateNotification() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification())
     }
 
     private fun formatTime(millis: Long): String {
-        val cal = java.util.Calendar.getInstance().apply { timeInMillis = millis }
-        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        val minute = cal.get(java.util.Calendar.MINUTE)
-        return String.format("%02d:%02d", hour, minute)
+        val cal = Calendar.getInstance().apply { timeInMillis = millis }
+        return String.format(
+            "%02d:%02d",
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE)
+        )
     }
 
     override fun onDestroy() {
         stopPlayback()
+        serviceScope.cancel()
         super.onDestroy()
     }
 
     companion object {
         const val NOTIFICATION_ID = 1
         const val ACTION_STOP = "com.muffle.ACTION_STOP"
+        private const val PENDING_INTENT_FLAGS =
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     }
 }

@@ -21,10 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -35,7 +35,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -59,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.muffle.service.NoisePlaybackService
 import com.muffle.ui.theme.SleepBlue
 import com.muffle.ui.theme.StopRed
+import com.muffle.viewmodel.MainUiState
 import com.muffle.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
 
@@ -70,30 +70,18 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
     var service by remember { mutableStateOf<NoisePlaybackService?>(null) }
     var showTimePicker by remember { mutableStateOf(false) }
 
-    // 알림 권한 요청 (Android 13+)
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 거부해도 서비스는 동작, 알림만 안 보임 */ }
 
-    // Service 바인딩
-    val connection = remember {
-        object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-                val localBinder = binder as NoisePlaybackService.LocalBinder
-                service = localBinder.getService().also { svc ->
-                    svc.onStateChanged = {
-                        viewModel.setPlaying(svc.isPlaying)
-                    }
-                    // 서비스가 이미 재생 중이면 UI 동기화
-                    viewModel.setPlaying(svc.isPlaying)
-                }
-            }
-
-            override fun onServiceDisconnected(name: ComponentName?) {
-                service = null
-            }
-        }
-    }
+    val connection = rememberServiceConnection(
+        onConnected = { svc ->
+            svc.onStateChanged = { viewModel.setPlaying(svc.isPlaying) }
+            viewModel.setPlaying(svc.isPlaying)
+            service = svc
+        },
+        onDisconnected = { service = null }
+    )
 
     DisposableEffect(Unit) {
         val intent = Intent(context, NoisePlaybackService::class.java)
@@ -104,7 +92,6 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
         }
     }
 
-    // 남은 시간 갱신 (재생 중일 때 1분마다)
     LaunchedEffect(uiState.isPlaying) {
         while (uiState.isPlaying) {
             viewModel.updateRemainingTime()
@@ -124,172 +111,211 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // 앱 이름
-            Text(
-                text = "Muffle",
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Light,
-                color = MaterialTheme.colorScheme.onBackground,
-                letterSpacing = 4.sp
-            )
-
+            AppTitle()
             Spacer(modifier = Modifier.height(48.dp))
-
-            // 종료 시각
-            Text(
-                text = "종료 시각",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            StopTimeSection(
+                uiState = uiState,
+                onTimeClick = { showTimePicker = true }
             )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            TextButton(onClick = { showTimePicker = true }) {
-                Text(
-                    text = String.format("%02d:%02d", uiState.stopHour, uiState.stopMinute),
-                    fontSize = 48.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 남은 시간
-            if (uiState.isPlaying && uiState.remainingTimeText.isNotEmpty()) {
-                Text(
-                    text = uiState.remainingTimeText,
-                    fontSize = 16.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             Spacer(modifier = Modifier.height(48.dp))
-
-            // 재생/정지 버튼
-            FilledIconButton(
+            PlayStopButton(
+                isPlaying = uiState.isPlaying,
                 onClick = {
-                    val svc = service ?: return@FilledIconButton
+                    val svc = service ?: return@PlayStopButton
                     if (svc.isPlaying) {
                         svc.stopPlayback()
                     } else {
-                        // 알림 권한 확인
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            if (ContextCompat.checkSelfPermission(
-                                    context, Manifest.permission.POST_NOTIFICATIONS
-                                ) != PackageManager.PERMISSION_GRANTED
-                            ) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        }
+                        requestNotificationPermissionIfNeeded(context, notificationPermissionLauncher)
                         val stopMillis = viewModel.calculateStopTimeMillis()
-                        val intent = Intent(context, NoisePlaybackService::class.java)
-                        ContextCompat.startForegroundService(context, intent)
+                        ContextCompat.startForegroundService(
+                            context,
+                            Intent(context, NoisePlaybackService::class.java)
+                        )
                         svc.startPlayback(stopMillis, uiState.volume)
                     }
-                },
-                modifier = Modifier.size(80.dp),
-                shape = CircleShape,
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = if (uiState.isPlaying) StopRed else SleepBlue
-                )
-            ) {
-                Icon(
-                    imageVector = if (uiState.isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                    contentDescription = if (uiState.isPlaying) "정지" else "재생",
-                    modifier = Modifier.size(40.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
-            }
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // 볼륨 퍼센트 표시
-            Text(
-                text = "${(uiState.volume * 100).toInt()}%",
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 볼륨 슬라이더 + 업/다운 버튼
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                IconButton(
-                    onClick = {
-                        val newVol = (uiState.volume - 0.05f).coerceIn(0f, 1f)
-                        viewModel.setVolume(newVol)
-                        service?.setVolume(newVol)
-                    }
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.VolumeDown,
-                        contentDescription = "볼륨 줄이기",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
+            Spacer(modifier = Modifier.height(48.dp))
+            VolumeControl(
+                volume = uiState.volume,
+                onVolumeChange = { vol ->
+                    viewModel.setVolume(vol)
+                    service?.setVolume(vol)
                 }
-                Slider(
-                    value = uiState.volume,
-                    onValueChange = { vol ->
-                        viewModel.setVolume(vol)
-                        service?.setVolume(vol)
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = SliderDefaults.colors(
-                        thumbColor = MaterialTheme.colorScheme.primary,
-                        activeTrackColor = MaterialTheme.colorScheme.primary,
-                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                )
-                IconButton(
-                    onClick = {
-                        val newVol = (uiState.volume + 0.05f).coerceIn(0f, 1f)
-                        viewModel.setVolume(newVol)
-                        service?.setVolume(newVol)
-                    }
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.VolumeUp,
-                        contentDescription = "볼륨 높이기",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
+            )
         }
     }
 
-    // TimePicker 다이얼로그
     if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(
+        StopTimePickerDialog(
             initialHour = uiState.stopHour,
             initialMinute = uiState.stopMinute,
-            is24Hour = true
-        )
-        AlertDialog(
-            onDismissRequest = { showTimePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.setStopTime(timePickerState.hour, timePickerState.minute)
-                    service?.updateStopTime(
-                        viewModel.calculateStopTimeMillis(timePickerState.hour, timePickerState.minute)
-                    )
-                    showTimePicker = false
-                }) {
-                    Text("확인")
-                }
+            onConfirm = { hour, minute ->
+                viewModel.setStopTime(hour, minute)
+                service?.updateStopTime(viewModel.calculateStopTimeMillis(hour, minute))
+                showTimePicker = false
             },
-            dismissButton = {
-                TextButton(onClick = { showTimePicker = false }) {
-                    Text("취소")
-                }
-            },
-            text = {
-                TimePicker(state = timePickerState)
-            }
+            onDismiss = { showTimePicker = false }
         )
     }
 }
+
+@Composable
+private fun AppTitle() {
+    Text(
+        text = "Muffle",
+        fontSize = 32.sp,
+        fontWeight = FontWeight.Light,
+        color = MaterialTheme.colorScheme.onBackground,
+        letterSpacing = 4.sp
+    )
+}
+
+@Composable
+private fun StopTimeSection(uiState: MainUiState, onTimeClick: () -> Unit) {
+    Text(
+        text = "종료 시각",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    TextButton(onClick = onTimeClick) {
+        Text(
+            text = String.format("%02d:%02d", uiState.stopHour, uiState.stopMinute),
+            fontSize = 48.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    if (uiState.isPlaying && uiState.remainingTimeText.isNotEmpty()) {
+        Text(
+            text = uiState.remainingTimeText,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun PlayStopButton(isPlaying: Boolean, onClick: () -> Unit) {
+    FilledIconButton(
+        onClick = onClick,
+        modifier = Modifier.size(80.dp),
+        shape = CircleShape,
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = if (isPlaying) StopRed else SleepBlue
+        )
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Filled.Stop else Icons.Filled.PlayArrow,
+            contentDescription = if (isPlaying) "정지" else "재생",
+            modifier = Modifier.size(40.dp),
+            tint = MaterialTheme.colorScheme.onPrimary
+        )
+    }
+}
+
+@Composable
+private fun VolumeControl(volume: Float, onVolumeChange: (Float) -> Unit) {
+    Text(
+        text = "${(volume * 100).toInt()}%",
+        fontSize = 14.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        IconButton(onClick = { onVolumeChange((volume - VOLUME_STEP).coerceIn(0f, 1f)) }) {
+            Icon(
+                Icons.AutoMirrored.Filled.VolumeDown,
+                contentDescription = "볼륨 줄이기",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+        Slider(
+            value = volume,
+            onValueChange = onVolumeChange,
+            modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        )
+        IconButton(onClick = { onVolumeChange((volume + VOLUME_STEP).coerceIn(0f, 1f)) }) {
+            Icon(
+                Icons.AutoMirrored.Filled.VolumeUp,
+                contentDescription = "볼륨 높이기",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StopTimePickerDialog(
+    initialHour: Int,
+    initialMinute: Int,
+    onConfirm: (hour: Int, minute: Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val timePickerState = rememberTimePickerState(
+        initialHour = initialHour,
+        initialMinute = initialMinute,
+        is24Hour = true
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onConfirm(timePickerState.hour, timePickerState.minute) }) {
+                Text("확인")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("취소")
+            }
+        },
+        text = {
+            TimePicker(state = timePickerState)
+        }
+    )
+}
+
+@Composable
+private fun rememberServiceConnection(
+    onConnected: (NoisePlaybackService) -> Unit,
+    onDisconnected: () -> Unit,
+): ServiceConnection = remember {
+    object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
+            val svc = (binder as NoisePlaybackService.LocalBinder).getService()
+            onConnected(svc)
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            onDisconnected()
+        }
+    }
+}
+
+private fun requestNotificationPermissionIfNeeded(
+    context: Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<String>,
+) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
+        != PackageManager.PERMISSION_GRANTED
+    ) {
+        launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+private const val VOLUME_STEP = 0.05f
